@@ -13,7 +13,6 @@ const interval = 0.125;
 let stream,
   recorder,
   clipUrl,
-  modelPromise,
   samples = [],
   markers = [];
 let generation = 0;
@@ -190,20 +189,13 @@ function waitForMedia(target, event, action) {
   });
 }
 
-function getModel() {
-  modelPromise ??= FilesetResolver.forVisionTasks("/wasm")
-    .then((files) =>
-      PoseLandmarker.createFromOptions(files, {
-        baseOptions: { modelAssetPath: "/pose.task" },
-        runningMode: "IMAGE",
-        numPoses: 1,
-      }),
-    )
-    .catch((error) => {
-      modelPromise = null;
-      throw error;
-    });
-  return modelPromise;
+async function createTracker() {
+  const files = await FilesetResolver.forVisionTasks("/wasm");
+  return PoseLandmarker.createFromOptions(files, {
+    baseOptions: { modelAssetPath: "/pose.task" },
+    runningMode: "VIDEO",
+    numPoses: 1,
+  });
 }
 
 async function review(blob, name, capture) {
@@ -243,6 +235,7 @@ async function review(blob, name, capture) {
     const reader = document.createElement("video");
     reader.muted = reader.playsInline = true;
     reader.preload = "auto";
+    let model;
     status("Opening clip…");
     try {
       await waitForMedia(video, "loadeddata", () => {
@@ -259,7 +252,7 @@ async function review(blob, name, capture) {
       renderMarkers();
       el("mark").disabled = true;
       status("Loading pose model…");
-      const model = await getModel();
+      model = await createTracker();
       if (id !== generation) return;
       await waitForMedia(reader, "loadeddata", () => {
         reader.src = source;
@@ -274,7 +267,7 @@ async function review(blob, name, capture) {
           await waitForMedia(reader, "seeked", () => {
             reader.currentTime = time;
           });
-        const result = model.detect(reader);
+        const result = model.detectForVideo(reader, time * 1000);
         frames.push({
           time,
           ...measureLeg(
@@ -293,6 +286,7 @@ async function review(blob, name, capture) {
       if (id !== generation) return;
       finishAnalysis(frames);
     } finally {
+      model?.close();
       reader.removeAttribute("src");
       reader.load();
     }
@@ -318,7 +312,7 @@ function finishAnalysis(frames) {
         Math.round((missed / frames.length) * 100) +
         "% of samples."
       : "");
-  if (!markers.length) {
+  if (!markers.length || missed) {
     let minimum = Infinity,
       maximum = -Infinity;
     const missing = new Map();
@@ -343,9 +337,11 @@ function finishAnalysis(frames) {
         "°.";
     }
     if (missing.size) {
-      const [reason, count] = [...missing].sort((a, b) => b[1] - a[1])[0];
+      const issues = [...missing]
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => reason + " (" + count + " samples)");
       el("summary").textContent +=
-        " Most common tracking issue: " + reason + " (" + count + " samples).";
+        " Tracking issues: " + issues.join(", ") + ".";
     }
   }
   renderMarkers();
@@ -382,26 +378,30 @@ async function reviewCamera(capture, id, source) {
   video.controls = true;
   video.src = source;
   status("Analyzing captured camera frames...");
-  const model = await getModel();
-  const image = new Image();
-  const frames = [];
-  for (const frame of capture.frames) {
-    if (id !== generation) return;
-    image.src = frame.image;
-    await image.decode();
-    if (id !== generation) return;
-    const result = model.detect(image);
-    frames.push({
-      time: frame.time,
-      ...measureLeg(result.landmarks[0], capture.width, capture.height),
-    });
+  const model = await createTracker();
+  try {
+    const image = new Image();
+    const frames = [];
+    for (const frame of capture.frames) {
+      if (id !== generation) return;
+      image.src = frame.image;
+      await image.decode();
+      if (id !== generation) return;
+      const result = model.detectForVideo(image, frame.time * 1000);
+      frames.push({
+        time: frame.time,
+        ...measureLeg(result.landmarks[0], capture.width, capture.height),
+      });
+    }
+    finishAnalysis(frames);
+    if (
+      video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+      !Number.isFinite(video.duration)
+    )
+      useFrames();
+  } finally {
+    model.close();
   }
-  finishAnalysis(frames);
-  if (
-    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-    !Number.isFinite(video.duration)
-  )
-    useFrames();
 }
 
 function renderMarkers() {
@@ -442,7 +442,18 @@ function draw() {
   if (!sample?.leg) {
     ctx.fillStyle = "#fff";
     ctx.font = Math.max(16, canvas.height / 25) + "px sans-serif";
-    ctx.fillText(sample?.reason ?? "Leg unclear", 15, canvas.height / 12);
+    const message = sample?.reason ?? "Leg unclear";
+    const baseline = canvas.height / 12;
+    const height = Math.max(16, canvas.height / 25);
+    ctx.fillStyle = "#101716";
+    ctx.fillRect(
+      8,
+      baseline - height,
+      ctx.measureText(message).width + 14,
+      height + 7,
+    );
+    ctx.fillStyle = "#fff";
+    ctx.fillText(message, 15, baseline);
     return;
   }
   ctx.beginPath();
