@@ -1,0 +1,20 @@
+{
+  "name": "coach-replay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/assets.js",
+    "dev": "vite --host 127.0.0.1",
+    "prebuild": "node scripts/assets.js",
+    "build": "vite build",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@fix-webm-duration/fix": "1.0.1",
+    "@mediapipe/tasks-vision": "0.10.22-rc.20250304"
+  },
+  "devDependencies": {
+    "vite": "6.4.6"
+  }
+}

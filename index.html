@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Coach · Squat replay</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header><strong>Coach</strong><span>Workout studio</span></header>
+      <h1>Squat replay</h1>
+      <p id="status" role="status">
+        Frame your full body from the side, or open a recorded set.
+      </p>
+      <section id="stage" aria-label="Workout video">
+        <video id="video" playsinline muted></video
+        ><canvas id="overlay"></canvas>
+        <span id="placeholder">Camera preview</span>
+      </section>
+      <div class="actions">
+        <button id="camera">Open camera</button
+        ><button id="record" hidden>Start set</button
+        ><button id="stop" hidden>End set</button>
+        <button id="open" class="secondary">Open video</button
+        ><input hidden id="file" type="file" accept="video/*" />
+        <a id="save" hidden>Save clip</a>
+      </div>
+      <section id="review" hidden>
+        <div class="heading">
+          <h2>Set review</h2>
+          <label
+            ><input id="pose" type="checkbox" checked /> Pose overlay</label
+          >
+        </div>
+        <p id="summary"></p>
+        <div id="markers"></div>
+        <div class="actions">
+          <button class="secondary" id="speed">Half speed</button
+          ><button class="secondary" id="mark">Mark rep at playhead</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>

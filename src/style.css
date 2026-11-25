@@ -1,0 +1,124 @@
+:root {
+  color-scheme: dark;
+  font-family: "DM Sans", system-ui, sans-serif;
+  background: #101716;
+  color: #edf5ed;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 900px;
+  margin: auto;
+  padding: 22px clamp(16px, 4vw, 48px) 44px;
+}
+header,
+.heading,
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid #35413d;
+}
+header strong {
+  font-size: 1.35rem;
+  color: #adf49b;
+}
+header span,
+p,
+label {
+  color: #b7c6bd;
+}
+h1 {
+  font-size: clamp(2rem, 5vw, 3.3rem);
+  letter-spacing: -0.045em;
+  margin: 20px 0 0;
+}
+p {
+  line-height: 1.45;
+  margin: 8px 0 14px;
+}
+#stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: #080d0c;
+  border: 1px solid #38443c;
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 140px;
+}
+video {
+  display: block;
+  width: 100%;
+  height: min(48vh, 440px);
+  object-fit: contain;
+}
+canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  object-fit: contain;
+}
+#placeholder {
+  position: absolute;
+  color: #9aa79e;
+}
+.actions,
+#markers {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+button,
+a {
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  color: #142016;
+  background: #b1eea4;
+  padding: 10px 16px;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+a,
+.secondary,
+#markers button {
+  background: #1c2823;
+  color: #e0ebdf;
+  border-color: #405146;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid white;
+}
+#review {
+  border-top: 1px solid #35413d;
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.heading {
+  justify-content: space-between;
+}
+h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+[hidden] {
+  display: none !important;
+}
