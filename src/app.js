@@ -1,7 +1,7 @@
 import { captureFrames, frameAt, framePlayer } from "./webcam.js";
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
-import { countReps, visibleLeg } from "./reps.js";
+import { bottomAngle, countReps, measureLeg, standingAngle } from "./reps.js";
 
 const el = (id) => document.getElementById(id);
 const video = el("video");
@@ -277,7 +277,7 @@ async function review(blob, name, capture) {
         const result = model.detect(reader);
         frames.push({
           time,
-          leg: visibleLeg(
+          ...measureLeg(
             result.landmarks[0],
             reader.videoWidth,
             reader.videoHeight,
@@ -318,6 +318,36 @@ function finishAnalysis(frames) {
         Math.round((missed / frames.length) * 100) +
         "% of samples."
       : "");
+  if (!markers.length) {
+    let minimum = Infinity,
+      maximum = -Infinity;
+    const missing = new Map();
+    for (const { leg, reason } of samples) {
+      if (leg) {
+        minimum = Math.min(minimum, leg.angle);
+        maximum = Math.max(maximum, leg.angle);
+      } else missing.set(reason, (missing.get(reason) ?? 0) + 1);
+    }
+    if (maximum >= 0) {
+      el("summary").textContent +=
+        " Observed knee angle " +
+        minimum.toFixed(1) +
+        "–" +
+        maximum.toFixed(1) +
+        "°. Counting sequence: ≥" +
+        standingAngle +
+        "°, ≤" +
+        bottomAngle +
+        "°, then ≥" +
+        standingAngle +
+        "°.";
+    }
+    if (missing.size) {
+      const [reason, count] = [...missing].sort((a, b) => b[1] - a[1])[0];
+      el("summary").textContent +=
+        " Most common tracking issue: " + reason + " (" + count + " samples).";
+    }
+  }
   renderMarkers();
   draw();
   status("Set ready for replay.");
@@ -363,7 +393,7 @@ async function reviewCamera(capture, id, source) {
     const result = model.detect(image);
     frames.push({
       time: frame.time,
-      leg: visibleLeg(result.landmarks[0], capture.width, capture.height),
+      ...measureLeg(result.landmarks[0], capture.width, capture.height),
     });
   }
   finishAnalysis(frames);
@@ -412,7 +442,7 @@ function draw() {
   if (!sample?.leg) {
     ctx.fillStyle = "#fff";
     ctx.font = Math.max(16, canvas.height / 25) + "px sans-serif";
-    ctx.fillText("Leg unclear", 15, canvas.height / 12);
+    ctx.fillText(sample?.reason ?? "Leg unclear", 15, canvas.height / 12);
     return;
   }
   ctx.beginPath();
