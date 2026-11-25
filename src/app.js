@@ -16,9 +16,51 @@ let stream,
   samples = [],
   markers = [];
 let generation = 0;
+let convertedUrl;
+let session = new AbortController();
+
+class ClipDecodeError extends Error {}
+
+function convertClip(clip, signal) {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const worker = new Worker("/convert-worker.js");
+    const cancel = () =>
+      finish(null, new DOMException("Set replaced", "AbortError"));
+    function finish(blob, error) {
+      worker.terminate();
+      signal.removeEventListener("abort", cancel);
+      if (error) reject(error);
+      else resolve(blob);
+    }
+    signal.addEventListener("abort", cancel, { once: true });
+    worker.onerror = () =>
+      finish(
+        null,
+        new Error(
+          "Local video converter failed to start. Restart the app and retry.",
+        ),
+      );
+    worker.onmessage = ({ data }) => {
+      if (data.error)
+        finish(
+          null,
+          new Error(
+            "Could not convert the video. Try exporting the original as H.264 MP4.",
+          ),
+        );
+      else finish(new Blob([data.bytes], { type: "video/webm" }));
+    };
+    worker.postMessage(clip);
+  });
+}
 
 function reset() {
   generation++;
+  session.abort();
+  session = new AbortController();
+  if (convertedUrl) URL.revokeObjectURL(convertedUrl);
+  convertedUrl = null;
   stream?.getTracks().forEach((track) => track.stop());
   stream = null;
   video.pause();
@@ -119,7 +161,7 @@ function waitForMedia(target, event, action) {
       else resolve();
     };
     const timer = setTimeout(
-      () => finish(new Error("Video timed out.")),
+      () => finish(new ClipDecodeError("Video timed out.")),
       15000,
     );
     target.addEventListener(event, () => finish(), {
@@ -127,7 +169,8 @@ function waitForMedia(target, event, action) {
     });
     target.addEventListener(
       "error",
-      () => finish(new Error("Unsupported or damaged video.")),
+      () =>
+        finish(new ClipDecodeError("The browser could not decode the video.")),
       { signal: controller.signal },
     );
     action();
@@ -154,85 +197,107 @@ async function review(blob, name) {
   reset();
   const id = generation;
   clipUrl = URL.createObjectURL(blob);
-  const source = clipUrl;
-  const reader = document.createElement("video");
-  reader.muted = reader.playsInline = true;
-  reader.preload = "auto";
-  status("Opening clip…");
+  const signal = session.signal;
+  el("save").hidden = false;
+  el("save").href = clipUrl;
+  el("save").download = name;
   try {
-    await waitForMedia(video, "loadeddata", () => {
-      video.src = source;
-    });
-    if (id !== generation) return;
-    el("placeholder").hidden = true;
-    video.controls = true;
-    el("review").hidden = el("save").hidden = false;
-    el("save").href = source;
-    el("save").download = name;
-    el("summary").textContent = "You can play the clip while analysis runs.";
-    renderMarkers();
-    el("mark").disabled = true;
-    status("Loading pose model…");
-    const model = await getModel();
-    if (id !== generation) return;
-    await waitForMedia(reader, "loadeddata", () => {
-      reader.src = source;
-    });
-    if (!Number.isFinite(reader.duration))
-      throw new Error("Clip has no finite duration.");
-    const frames = [];
-    for (let index = 0; index * interval < reader.duration; index++) {
+    try {
+      await analyze(clipUrl);
+    } catch (error) {
+      if (id !== generation || !(error instanceof ClipDecodeError)) throw error;
+      status("Converting the clip on this device...");
+      const compatible = await convertClip(blob, signal);
       if (id !== generation) return;
-      const time = index * interval;
-      if (index)
-        await waitForMedia(reader, "seeked", () => {
-          reader.currentTime = time;
-        });
-      const result = model.detect(reader);
-      frames.push({
-        time,
-        leg: visibleLeg(
-          result.landmarks[0],
-          reader.videoWidth,
-          reader.videoHeight,
-        ),
-      });
-      if (index % 8 === 0)
-        status(
-          "Analyzing set · " + Math.floor((100 * time) / reader.duration) + "%",
-        );
+      convertedUrl = URL.createObjectURL(compatible);
+      await analyze(convertedUrl);
     }
+  } catch (error) {
     if (id !== generation) return;
-    samples = frames;
-    markers = countReps(samples);
-    const missed = samples.filter((sample) => !sample.leg).length;
-    const tempos = markers
-      .map((rep) => rep.bottom - rep.start)
-      .sort((a, b) => a - b);
-    const mid = Math.floor(tempos.length / 2);
-    const median =
-      tempos.length % 2 ? tempos[mid] : (tempos[mid - 1] + tempos[mid]) / 2;
-    el("summary").textContent =
-      markers.length +
-      " complete reps." +
-      (markers.length ? " Median descent " + median.toFixed(1) + " s." : "") +
-      (missed
-        ? " Leg unclear in " +
-          Math.round((missed / frames.length) * 100) +
-          "% of samples."
-        : "");
-    renderMarkers();
-    draw();
-    status("Set ready for replay.");
-  } catch (e) {
-    if (id === generation) {
-      status("Could not finish analysis. " + e.message);
+    status("Could not finish analysis. " + error.message);
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       el("summary").textContent = "Use the playhead to mark reps manually.";
     }
   } finally {
-    reader.removeAttribute("src");
-    reader.load();
     if (id === generation) el("mark").disabled = false;
+  }
+
+  async function analyze(source) {
+    const reader = document.createElement("video");
+    reader.muted = reader.playsInline = true;
+    reader.preload = "auto";
+    status("Opening clip…");
+    try {
+      await waitForMedia(video, "loadeddata", () => {
+        video.src = source;
+      });
+      if (id !== generation) return;
+      if (!video.videoWidth) throw new ClipDecodeError("No playable video track.");
+      el("placeholder").hidden = true;
+      video.controls = true;
+      el("review").hidden = el("save").hidden = false;
+
+      el("summary").textContent = "You can play the clip while analysis runs.";
+      renderMarkers();
+      el("mark").disabled = true;
+      status("Loading pose model…");
+      const model = await getModel();
+      if (id !== generation) return;
+      await waitForMedia(reader, "loadeddata", () => {
+        reader.src = source;
+      });
+      if (!Number.isFinite(reader.duration))
+        throw new ClipDecodeError("Clip has no finite duration.");
+      const frames = [];
+      for (let index = 0; index * interval < reader.duration; index++) {
+        if (id !== generation) return;
+        const time = index * interval;
+        if (index)
+          await waitForMedia(reader, "seeked", () => {
+            reader.currentTime = time;
+          });
+        const result = model.detect(reader);
+        frames.push({
+          time,
+          leg: visibleLeg(
+            result.landmarks[0],
+            reader.videoWidth,
+            reader.videoHeight,
+          ),
+        });
+        if (index % 8 === 0)
+          status(
+            "Analyzing set · " +
+              Math.floor((100 * time) / reader.duration) +
+              "%",
+          );
+      }
+      if (id !== generation) return;
+      samples = frames;
+      markers = countReps(samples);
+      const missed = samples.filter((sample) => !sample.leg).length;
+      const tempos = markers
+        .map((rep) => rep.bottom - rep.start)
+        .sort((a, b) => a - b);
+      const mid = Math.floor(tempos.length / 2);
+      const median =
+        tempos.length % 2 ? tempos[mid] : (tempos[mid - 1] + tempos[mid]) / 2;
+      el("summary").textContent =
+        markers.length +
+        " complete reps." +
+        (markers.length ? " Median descent " + median.toFixed(1) + " s." : "") +
+        (missed
+          ? " Leg unclear in " +
+            Math.round((missed / frames.length) * 100) +
+            "% of samples."
+          : "");
+      renderMarkers();
+      draw();
+      status("Set ready for replay.");
+    } finally {
+      reader.removeAttribute("src");
+      reader.load();
+    }
   }
 }
 

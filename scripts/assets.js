@@ -24,3 +24,7 @@ if (!model || hash(model) !== digest) {
 await cp("node_modules/@mediapipe/tasks-vision/wasm", "public/wasm", {
   recursive: true,
 });
+
+await cp("node_modules/@ffmpeg/core/dist/umd", "public/codec", {
+  recursive: true,
+});

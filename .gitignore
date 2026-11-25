@@ -3,3 +3,4 @@ dist/
 public/wasm/
 public/pose.task
 *.log
+public/codec/
