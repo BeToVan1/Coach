@@ -15,7 +15,9 @@
       </p>
       <section id="stage" aria-label="Workout video">
         <video id="video" playsinline muted></video
-        ><canvas id="overlay"></canvas>
+        ><img hidden id="frame" alt="Webcam replay frame" /><canvas
+          id="overlay"
+        ></canvas>
         <span id="placeholder">Camera preview</span>
       </section>
       <div class="actions">
@@ -32,6 +34,17 @@
           <label
             ><input id="pose" type="checkbox" checked /> Pose overlay</label
           >
+        </div>
+        <div id="frame-controls" class="actions" hidden>
+          <button id="frame-play">Play</button
+          ><input
+            type="range"
+            id="frame-seek"
+            aria-label="Replay position"
+            min="0"
+            step="0.01"
+            value="0"
+          />
         </div>
         <p id="summary"></p>
         <div id="markers"></div>

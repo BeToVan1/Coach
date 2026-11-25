@@ -1,3 +1,4 @@
+import { captureFrames, frameAt, framePlayer } from "./webcam.js";
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
 import { countReps, visibleLeg } from "./reps.js";
@@ -16,6 +17,7 @@ let stream,
   samples = [],
   markers = [];
 let generation = 0;
+let replay;
 let convertedUrl;
 let session = new AbortController();
 
@@ -57,6 +59,11 @@ function convertClip(clip, signal) {
 
 function reset() {
   generation++;
+  video.onerror = null;
+  replay?.dispose();
+  replay = null;
+  video.hidden = false;
+  el("frame-controls").hidden = el("frame").hidden = true;
   session.abort();
   session = new AbortController();
   if (convertedUrl) URL.revokeObjectURL(convertedUrl);
@@ -114,24 +121,29 @@ async function camera() {
 
 function record() {
   try {
-    const mimeType = ["video/webm;codecs=vp8", "video/webm"].find((type) =>
-      MediaRecorder.isTypeSupported(type),
+    const mimeType = ["video/webm;codecs=vp8", "video/webm"].find(
+      (type) => MediaRecorder.isTypeSupported(type) && video.canPlayType(type),
     );
     recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     const chunks = [];
     recorder.ondataavailable = (e) => {
       if (e.data.size) chunks.push(e.data);
     };
+    let finishCapture;
     const start = performance.now();
     recorder.onstop = async () => {
       const duration = performance.now() - start;
+      const capture = finishCapture();
       try {
         let blob = new Blob(chunks, { type: recorder.mimeType });
         if (blob.type.includes("webm"))
-          blob = await fixWebmDuration(blob, duration, { logger: false });
+          blob = await fixWebmDuration(blob, duration, { logger: false }).catch(
+            () => blob,
+          );
         await review(
           blob,
           blob.type.includes("mp4") ? "squat-set.mp4" : "squat-set.webm",
+          capture,
         );
       } catch (e) {
         reset();
@@ -139,6 +151,7 @@ function record() {
       }
     };
     recorder.start();
+    finishCapture = captureFrames(video, interval);
     el("open").disabled = true;
     el("record").hidden = true;
     el("stop").hidden = false;
@@ -193,7 +206,7 @@ function getModel() {
   return modelPromise;
 }
 
-async function review(blob, name) {
+async function review(blob, name, capture) {
   reset();
   const id = generation;
   clipUrl = URL.createObjectURL(blob);
@@ -202,6 +215,10 @@ async function review(blob, name) {
   el("save").href = clipUrl;
   el("save").download = name;
   try {
+    if (capture?.frames.length) {
+      await reviewCamera(capture, id, clipUrl);
+      return;
+    }
     try {
       await analyze(clipUrl);
     } catch (error) {
@@ -232,7 +249,8 @@ async function review(blob, name) {
         video.src = source;
       });
       if (id !== generation) return;
-      if (!video.videoWidth) throw new ClipDecodeError("No playable video track.");
+      if (!video.videoWidth)
+        throw new ClipDecodeError("No playable video track.");
       el("placeholder").hidden = true;
       video.controls = true;
       el("review").hidden = el("save").hidden = false;
@@ -273,32 +291,87 @@ async function review(blob, name) {
           );
       }
       if (id !== generation) return;
-      samples = frames;
-      markers = countReps(samples);
-      const missed = samples.filter((sample) => !sample.leg).length;
-      const tempos = markers
-        .map((rep) => rep.bottom - rep.start)
-        .sort((a, b) => a - b);
-      const mid = Math.floor(tempos.length / 2);
-      const median =
-        tempos.length % 2 ? tempos[mid] : (tempos[mid - 1] + tempos[mid]) / 2;
-      el("summary").textContent =
-        markers.length +
-        " complete reps." +
-        (markers.length ? " Median descent " + median.toFixed(1) + " s." : "") +
-        (missed
-          ? " Leg unclear in " +
-            Math.round((missed / frames.length) * 100) +
-            "% of samples."
-          : "");
-      renderMarkers();
-      draw();
-      status("Set ready for replay.");
+      finishAnalysis(frames);
     } finally {
       reader.removeAttribute("src");
       reader.load();
     }
   }
+}
+
+function finishAnalysis(frames) {
+  samples = frames;
+  markers = countReps(samples);
+  const missed = samples.filter((sample) => !sample.leg).length;
+  const tempos = markers
+    .map((rep) => rep.bottom - rep.start)
+    .sort((a, b) => a - b);
+  const mid = Math.floor(tempos.length / 2);
+  const median =
+    tempos.length % 2 ? tempos[mid] : (tempos[mid - 1] + tempos[mid]) / 2;
+  el("summary").textContent =
+    markers.length +
+    " complete reps." +
+    (markers.length ? " Median descent " + median.toFixed(1) + " s." : "") +
+    (missed
+      ? " Leg unclear in " +
+        Math.round((missed / frames.length) * 100) +
+        "% of samples."
+      : "");
+  renderMarkers();
+  draw();
+  status("Set ready for replay.");
+}
+
+async function reviewCamera(capture, id, source) {
+  el("review").hidden = false;
+  el("placeholder").hidden = true;
+  el("mark").disabled = true;
+  el("summary").textContent = "Analyzing captured camera frames.";
+  renderMarkers();
+  function useFrames() {
+    if (id !== generation || replay) return;
+    video.hidden = true;
+    video.pause();
+    el("frame").hidden = el("frame-controls").hidden = false;
+    canvas.width = capture.width;
+    canvas.height = capture.height;
+    replay = framePlayer(
+      capture.frames,
+      el("frame"),
+      el("frame-seek"),
+      el("frame-play"),
+      draw,
+    );
+    replay.setRate(video.playbackRate);
+    draw();
+  }
+  // Native playback and pose analysis are independent. A failed decoder can
+  // switch to image replay even after the native player initially loaded.
+  video.onerror = useFrames;
+  video.controls = true;
+  video.src = source;
+  status("Analyzing captured camera frames...");
+  const model = await getModel();
+  const image = new Image();
+  const frames = [];
+  for (const frame of capture.frames) {
+    if (id !== generation) return;
+    image.src = frame.image;
+    await image.decode();
+    if (id !== generation) return;
+    const result = model.detect(image);
+    frames.push({
+      time: frame.time,
+      leg: visibleLeg(result.landmarks[0], capture.width, capture.height),
+    });
+  }
+  finishAnalysis(frames);
+  if (
+    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+    !Number.isFinite(video.duration)
+  )
+    useFrames();
 }
 
 function renderMarkers() {
@@ -310,6 +383,11 @@ function renderMarkers() {
         ? "Manual marker"
         : "Descent " + (rep.bottom - rep.start).toFixed(1) + " s";
       button.onclick = () => {
+        if (replay) {
+          replay.seek(rep.start);
+          replay.play();
+          return;
+        }
         video.currentTime = rep.start;
         video.play().catch(() => {});
       };
@@ -321,6 +399,7 @@ function renderMarkers() {
 function draw() {
   const ctx = canvas.getContext("2d");
   if (
+    !replay &&
     video.videoWidth &&
     (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)
   ) {
@@ -329,10 +408,7 @@ function draw() {
   }
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!samples.length || !el("pose").checked) return;
-  const sample =
-    samples[
-      Math.min(samples.length - 1, Math.floor(video.currentTime / interval))
-    ];
+  const sample = samples[frameAt(samples, replay?.time ?? video.currentTime)];
   if (!sample?.leg) {
     ctx.fillStyle = "#fff";
     ctx.font = Math.max(16, canvas.height / 25) + "px sans-serif";
@@ -362,12 +438,13 @@ el("file").onchange = (e) => {
   if (file) review(file, file.name);
 };
 el("mark").onclick = () => {
-  markers.push({ start: video.currentTime, manual: true });
+  markers.push({ start: replay?.time ?? video.currentTime, manual: true });
   markers.sort((a, b) => a.start - b.start);
   renderMarkers();
 };
 el("speed").onclick = () => {
   video.playbackRate = video.playbackRate === 1 ? 0.5 : 1;
+  replay?.setRate(video.playbackRate);
   el("speed").textContent =
     video.playbackRate === 1 ? "Half speed" : "Normal speed";
 };

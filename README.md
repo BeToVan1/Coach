@@ -21,7 +21,9 @@ Open the localhost URL printed in the terminal. First launch downloads Google's 
 
 The counter uses the more visible leg, arms above a 158-degree knee angle, and looks for flexion to 112 degrees or less followed by a return to standing. These are initial detection thresholds for side-view squats. Low visibility resets an incomplete cycle. Descent timing is approximate to the sampling interval. Validate with manually labeled normal, slow and partly obscured sets before using these metrics for workout feedback.
 
-When a clip fails to decode or seek, Coach tries to convert it locally to a silent WebM replay using FFmpeg. Save Clip downloads the original file, including when conversion fails.
+For new webcam sets, Coach captures timestamped images alongside the video and analyzes those images directly. If playback fails, the replay controls use the captured images at about eight frames per second. Save Clip still exports the browser recording.
+
+When an imported clip fails to decode or seek, Coach tries to convert it locally to a silent WebM replay using FFmpeg. Save Clip downloads the original file, including when conversion fails.
 
 The first milestone covers recording and replay. Voice food logging and target-hardware benchmarks are future milestones.
 

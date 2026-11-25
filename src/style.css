@@ -55,7 +55,8 @@ p {
   overflow: hidden;
   min-height: 140px;
 }
-video {
+video,
+#frame {
   display: block;
   width: 100%;
   height: min(48vh, 440px);
