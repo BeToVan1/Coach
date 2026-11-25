@@ -22,7 +22,7 @@ let session = new AbortController();
 
 class ClipDecodeError extends Error {}
 
-function convertClip(clip, signal) {
+function convertClip(clip, signal, framesPerSecond) {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
     const worker = new Worker("/convert-worker.js");
@@ -50,9 +50,10 @@ function convertClip(clip, signal) {
             "Could not convert the video. Try exporting the original as H.264 MP4.",
           ),
         );
+      else if (data.images) finish(data.images);
       else finish(new Blob([data.bytes], { type: "video/webm" }));
     };
-    worker.postMessage(clip);
+    worker.postMessage({ clip, framesPerSecond });
   });
 }
 
@@ -208,7 +209,7 @@ async function review(blob, name, capture) {
   el("save").download = name;
   try {
     if (capture?.frames.length) {
-      await reviewCamera(capture, id, clipUrl);
+      await reviewFrames(capture, id, clipUrl);
       return;
     }
     try {
@@ -216,10 +217,45 @@ async function review(blob, name, capture) {
     } catch (error) {
       if (id !== generation || !(error instanceof ClipDecodeError)) throw error;
       status("Converting the clip on this device...");
-      const compatible = await convertClip(blob, signal);
+      // Coach's own recordings are usually WebM. Re-encoding to another
+      // WebM still depends on the same browser decoder.
+      if (
+        !blob.type.includes("webm") &&
+        !name.toLowerCase().endsWith(".webm")
+      ) {
+        const compatible = await convertClip(blob, signal);
+        if (id !== generation) return;
+        convertedUrl = URL.createObjectURL(compatible);
+        try {
+          await analyze(convertedUrl);
+          return;
+        } catch (convertedError) {
+          if (id !== generation || !(convertedError instanceof ClipDecodeError))
+            throw convertedError;
+        }
+      }
+      status("Reading replay frames on this device...");
+      const images = await convertClip(blob, signal, 1 / interval);
       if (id !== generation) return;
-      convertedUrl = URL.createObjectURL(compatible);
-      await analyze(convertedUrl);
+      const frames = images.map((image, index) => ({
+        time: index * interval,
+        image: URL.createObjectURL(image),
+      }));
+      signal.addEventListener(
+        "abort",
+        () => {
+          for (const frame of frames) URL.revokeObjectURL(frame.image);
+        },
+        { once: true },
+      );
+      const first = new Image();
+      first.src = frames[0].image;
+      await first.decode();
+      if (id !== generation) return;
+      await reviewFrames(
+        { frames, width: first.naturalWidth, height: first.naturalHeight },
+        id,
+      );
     }
   } catch (error) {
     if (id !== generation) return;
@@ -349,11 +385,11 @@ function finishAnalysis(frames) {
   status("Set ready for replay.");
 }
 
-async function reviewCamera(capture, id, source) {
+async function reviewFrames(capture, id, source) {
   el("review").hidden = false;
   el("placeholder").hidden = true;
   el("mark").disabled = true;
-  el("summary").textContent = "Analyzing captured camera frames.";
+  el("summary").textContent = "Analyzing captured frames.";
   renderMarkers();
   function useFrames() {
     if (id !== generation || replay) return;
@@ -374,10 +410,14 @@ async function reviewCamera(capture, id, source) {
   }
   // Native playback and pose analysis are independent. A failed decoder can
   // switch to image replay even after the native player initially loaded.
-  video.onerror = useFrames;
-  video.controls = true;
-  video.src = source;
-  status("Analyzing captured camera frames...");
+  if (source) {
+    video.onerror = useFrames;
+    video.controls = true;
+    video.src = source;
+  } else {
+    useFrames();
+  }
+  status("Analyzing captured frames...");
   const model = await createTracker();
   try {
     const image = new Image();

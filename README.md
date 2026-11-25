@@ -13,6 +13,8 @@ npm run dev
 
 Open the localhost URL printed in the terminal. First launch downloads Google's versioned Pose Landmarker Lite model and verifies its SHA-256. The application serves inference assets from your computer. Use `npm test` for the counter tests and `npm run build` for the static production bundle.
 
+To run the saved-recording browser regression, install the test browser once with `npx playwright-core install chromium --only-shell`, then run `npm run test:import`. It exercises the download and import flow with a simulated webcam.
+
 ## First workout
 
 1. Frame your full body from the side. Start standing, record a set, then select **End set**. **Open video** also accepts clips supported by your browser.
@@ -23,7 +25,7 @@ The counter uses the more visible leg, starts at a knee angle of at least 158 de
 
 For new webcam sets, Coach captures timestamped images alongside the video and analyzes those images directly. If playback fails, the replay controls use the captured images at about eight frames per second. Save Clip still exports the browser recording.
 
-When an imported clip fails to decode or seek, Coach tries to convert it locally to a silent WebM replay using FFmpeg. Save Clip downloads the original file, including when conversion fails.
+If the browser cannot decode or seek a saved WebM, Coach uses local FFmpeg to read images directly from the file for analysis and eight-frame-per-second replay. For other formats it tries a silent WebM conversion first and can also use image replay if playback fails. Save Clip downloads the original file, including when conversion fails.
 
 The first milestone covers recording and replay. Voice food logging and target-hardware benchmarks are future milestones.
 
